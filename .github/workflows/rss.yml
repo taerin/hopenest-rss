@@ -1,0 +1,25 @@
+name: Generate Instagram RSS
+
+on:
+  schedule:
+    - cron: "0 */6 * * *" # 6시간마다 실행
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.21
+      - name: Build and run
+        run: |
+          go run ./cmd/rssgen/main.go
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: .
+

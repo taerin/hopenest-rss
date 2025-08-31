@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"regexp"
 
 	"github.com/gorilla/feeds"
 )
@@ -16,6 +15,31 @@ type Post struct {
 	Caption   string
 	MediaURL  string
 	Permalink string
+}
+
+// Instagram JSON 구조
+type Graphql struct {
+	User struct {
+		EdgeOwnerToTimelineMedia struct {
+			Edges []struct {
+				Node struct {
+					Shortcode          string `json:"shortcode"`
+					DisplayURL         string `json:"display_url"`
+					EdgeMediaToCaption struct {
+						Edges []struct {
+							Node struct {
+								Text string `json:"text"`
+							} `json:"node"`
+						} `json:"edges"`
+					} `json:"edge_media_to_caption"`
+				} `json:"node"`
+			} `json:"edges"`
+		} `json:"edge_owner_to_timeline_media"`
+	} `json:"user"`
+}
+
+type InstaResponse struct {
+	Graphql Graphql `json:"graphql"`
 }
 
 func main() {
@@ -57,54 +81,37 @@ func main() {
 }
 
 func fetchPosts(username string, limit int) ([]Post, error) {
-	url := fmt.Sprintf("https://www.instagram.com/%s/", username)
-
+	url := fmt.Sprintf("https://www.instagram.com/%s/?__a=1&__d=dis", username)
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	// strings.Builder 대신 io.ReadAll 사용
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
-	html := string(body)
 
-	// JSON 데이터 추출
-	re := regexp.MustCompile(`window\._sharedData = (.*);</script>`)
-	matches := re.FindStringSubmatch(html)
-	if len(matches) < 2 {
-		return nil, fmt.Errorf("could not find sharedData")
-	}
-
-	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(matches[1]), &data); err != nil {
+	var data InstaResponse
+	if err := json.Unmarshal(body, &data); err != nil {
 		return nil, err
 	}
 
-	user := data["entry_data"].(map[string]interface{})["ProfilePage"].([]interface{})[0].(map[string]interface{})
-	graphql := user["graphql"].(map[string]interface{})
-	edgeOwner := graphql["user"].(map[string]interface{})["edge_owner_to_timeline_media"].(map[string]interface{})
-	edges := edgeOwner["edges"].([]interface{})
-
 	posts := []Post{}
+	edges := data.Graphql.User.EdgeOwnerToTimelineMedia.Edges
 	for i, edge := range edges {
 		if i >= limit {
 			break
 		}
-		node := edge.(map[string]interface{})["node"].(map[string]interface{})
 		caption := ""
-		if edgesCap, ok := node["edge_media_to_caption"].(map[string]interface{}); ok {
-			if arr, ok := edgesCap["edges"].([]interface{}); ok && len(arr) > 0 {
-				caption = arr[0].(map[string]interface{})["node"].(map[string]interface{})["text"].(string)
-			}
+		if len(edge.Node.EdgeMediaToCaption.Edges) > 0 {
+			caption = edge.Node.EdgeMediaToCaption.Edges[0].Node.Text
 		}
 		posts = append(posts, Post{
 			Caption:   caption,
-			MediaURL:  node["display_url"].(string),
-			Permalink: fmt.Sprintf("https://www.instagram.com/p/%s/", node["shortcode"].(string)),
+			MediaURL:  edge.Node.DisplayURL,
+			Permalink: fmt.Sprintf("https://www.instagram.com/p/%s/", edge.Node.Shortcode),
 		})
 	}
 
